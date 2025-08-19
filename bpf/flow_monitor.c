@@ -200,24 +200,29 @@ static __always_inline __u32 calculate_jitter(struct flow_stats_nf *stats, __u64
     
     __u64 total_variance = 0;
     __u64 avg_interval = 0;
+    __u32 count = stats->interval_index > JITTER_WINDOW_SIZE ? JITTER_WINDOW_SIZE : stats->interval_index;
     
-    // Calculate average interval
-    for (int i = 0; i < JITTER_WINDOW_SIZE && i < stats->interval_index; i++) {
+    // Calculate average interval with bounded loop
+    #pragma unroll
+    for (int i = 0; i < JITTER_WINDOW_SIZE; i++) {
+        if (i >= count) break;
         avg_interval += stats->pkt_intervals[i];
     }
-    if (stats->interval_index > 0) {
-        avg_interval /= stats->interval_index;
+    if (count > 0) {
+        avg_interval /= count;
     }
     
-    // Calculate variance (simplified jitter calculation)
-    for (int i = 0; i < JITTER_WINDOW_SIZE && i < stats->interval_index; i++) {
+    // Calculate variance (simplified jitter calculation) with bounded loop
+    #pragma unroll
+    for (int i = 0; i < JITTER_WINDOW_SIZE; i++) {
+        if (i >= count) break;
         __u64 diff = stats->pkt_intervals[i] > avg_interval ? 
                     stats->pkt_intervals[i] - avg_interval : 
                     avg_interval - stats->pkt_intervals[i];
         total_variance += diff;
     }
     
-    return (__u32)(total_variance / 1000); // Convert to microseconds
+    return count > 0 ? (__u32)(total_variance / 1000) : 0; // Convert to microseconds
 }
 
 // Update TCP connection state and calculate handshake latency
@@ -305,10 +310,12 @@ static __always_inline void update_jitter_metrics(struct flow_stats_nf *stats, _
     if (stats->last_seen_ns != 0) {
         __u64 interval = timestamp - stats->last_seen_ns;
         
-        // Store interval in circular buffer
+        // Store interval in circular buffer with bounds check
         __u8 idx = stats->interval_index % JITTER_WINDOW_SIZE;
-        stats->pkt_intervals[idx] = interval;
-        stats->interval_index++;
+        if (idx < JITTER_WINDOW_SIZE) {
+            stats->pkt_intervals[idx] = interval;
+            stats->interval_index++;
+        }
         
         // Calculate current jitter
         __u32 jitter = calculate_jitter(stats, interval);
