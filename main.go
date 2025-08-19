@@ -25,12 +25,12 @@ import (
 )
 
 const (
-	BPFObjFile      = "bpf/flow_monitor.o"
-	ProgramName     = "xdp_prog"
-	RingMapName     = "flow_ring"
+	BPFObjFile       = "bpf/flow_monitor.o"
+	ProgramName      = "xdp_prog"
+	RingMapName      = "flow_ring"
 	DefaultIfaceName = "ens5"
-	MetadataURL     = "http://169.254.169.254/latest/dynamic/instance-identity/document"
-	RefreshInterval = 300 * time.Second
+	MetadataURL      = "http://169.254.169.254/latest/dynamic/instance-identity/document"
+	RefreshInterval  = 300 * time.Second
 )
 
 type FlowKey struct {
@@ -66,17 +66,17 @@ type FlowStats struct {
 	TCPFlags   uint8
 
 	// Connection establishment metrics
-	SynTimestamp      uint64
-	SynAckTimestamp   uint64
-	AckTimestamp      uint64
+	SynTimestamp       uint64
+	SynAckTimestamp    uint64
+	AckTimestamp       uint64
 	HandshakeLatencyUs uint32
 
 	// Retransmission tracking
-	Retransmissions     uint32
-	FastRetransmits     uint32
-	TimeoutRetransmits  uint32
-	LastSeq             uint32
-	LastSeqTimestamp    uint64
+	Retransmissions    uint32
+	FastRetransmits    uint32
+	TimeoutRetransmits uint32
+	LastSeq            uint32
+	LastSeqTimestamp   uint64
 
 	// Jitter and timing metrics
 	PktIntervals  [5]uint64 // JITTER_WINDOW_SIZE = 5
@@ -358,13 +358,13 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		// Track the last verdict as a count of 1 for that verdict type
 		var accepts, drops, rejects, queues uint32
 		switch metrics.LastVerdict {
-		case 1:   // NF_ACCEPT
+		case 1: // NF_ACCEPT
 			accepts = 1
-		case 0:   // NF_DROP  
+		case 0: // NF_DROP
 			drops = 1
 		case 999: // Custom REJECT value
 			rejects = 1
-		case 3:   // NF_QUEUE
+		case 3: // NF_QUEUE
 			queues = 1
 		}
 		metricsMap["netfilter_accepts"] = accepts
@@ -484,7 +484,7 @@ func getAllInterfaces() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var names []string
 	for _, iface := range interfaces {
 		// Skip loopback and down interfaces
@@ -501,14 +501,14 @@ func attachToInterface(coll *ebpf.Collection, ifaceName string) (link.Link, erro
 	if err != nil {
 		return nil, fmt.Errorf("interface lookup for %s: %v", ifaceName, err)
 	}
-	
+
 	prog := coll.Programs[ProgramName]
 	if prog == nil {
 		return nil, fmt.Errorf("program %q not found", ProgramName)
 	}
-	
+
 	fmt.Printf("Attaching to interface: %s (index %d)\n", ifaceName, iface.Index)
-	
+
 	lnk, err := link.AttachXDP(link.XDPOptions{
 		Program:   prog,
 		Interface: iface.Index,
@@ -517,7 +517,7 @@ func attachToInterface(coll *ebpf.Collection, ifaceName string) (link.Link, erro
 	if err != nil {
 		return nil, fmt.Errorf("attach XDP to %s: %v", ifaceName, err)
 	}
-	
+
 	return lnk, nil
 }
 
@@ -529,11 +529,22 @@ func showUsage() {
 	fmt.Printf("  -i, --interface <name>    Interface to monitor (default: %s)\n", DefaultIfaceName)
 	fmt.Printf("  -a, --all-interfaces      Monitor all available interfaces\n")
 	fmt.Printf("  -l, --list-interfaces     List available interfaces and exit\n")
+	fmt.Printf("  --test-netfilter          Enable simulated netfilter data for testing\n")
 	fmt.Printf("  -h, --help               Show this help message\n\n")
 	fmt.Printf("Examples:\n")
 	fmt.Printf("  %s -i eth0                Monitor eth0 interface\n", os.Args[0])
 	fmt.Printf("  %s -a                     Monitor all interfaces\n", os.Args[0])
 	fmt.Printf("  %s -l                     List available interfaces\n", os.Args[0])
+}
+
+// Helper function to copy string to int8 array
+func stringToInt8Array(dst []int8, src string) {
+	for i := 0; i < len(dst)-1 && i < len(src); i++ {
+		dst[i] = int8(src[i])
+	}
+	if len(dst) > 0 {
+		dst[len(dst)-1] = 0 // Null terminate
+	}
 }
 
 func main() {
@@ -546,15 +557,16 @@ func main() {
 	var listInterfacesFlag = flag.Bool("list-interfaces", false, "List available interfaces and exit")
 	var showHelp = flag.Bool("h", false, "Show help message")
 	var showHelpFlag = flag.Bool("help", false, "Show help message")
-	
+	var testNetfilter = flag.Bool("test-netfilter", false, "Enable simulated netfilter data for testing")
+
 	flag.Parse()
-	
+
 	// Handle help
 	if *showHelp || *showHelpFlag {
 		showUsage()
 		return
 	}
-	
+
 	// Handle list interfaces
 	if *listInterfaces || *listInterfacesFlag {
 		interfaces, err := getAllInterfaces()
@@ -567,7 +579,7 @@ func main() {
 		}
 		return
 	}
-	
+
 	// Determine which interface(s) to use
 	var targetInterfaces []string
 	if *allInterfaces || *allInterfacesFlag {
@@ -697,13 +709,48 @@ func main() {
 			metrics := ev.Metrics
 			now := time.Now()
 
+			// Simulate netfilter data for testing if enabled
+			if *testNetfilter && metrics.LastVerdict == 0 {
+				// Simulate different verdicts based on port or protocol
+				if key.InnerProto == 6 { // TCP
+					if key.InnerDstPort == 80 || key.InnerDstPort == 443 {
+						metrics.LastVerdict = 1 // NF_ACCEPT for HTTP/HTTPS
+						metrics.NetfilterInfo.Verdict = 1
+						metrics.NetfilterInfo.Hook = 1 // NF_INET_LOCAL_IN
+						metrics.NetfilterInfo.Priority = -200
+						stringToInt8Array(metrics.NetfilterInfo.TableName[:], "filter")
+						stringToInt8Array(metrics.NetfilterInfo.ChainName[:], "INPUT")
+						metrics.NetfilterInfo.RuleNum = 5
+						stringToInt8Array(metrics.NetfilterInfo.RuleTarget[:], "ACCEPT")
+					} else if key.InnerDstPort == 22 {
+						metrics.LastVerdict = 0 // NF_DROP for SSH (simulated block)
+						metrics.NetfilterInfo.Verdict = 0
+						metrics.NetfilterInfo.Hook = 1 // NF_INET_LOCAL_IN
+						metrics.NetfilterInfo.Priority = -100
+						stringToInt8Array(metrics.NetfilterInfo.TableName[:], "filter")
+						stringToInt8Array(metrics.NetfilterInfo.ChainName[:], "INPUT")
+						metrics.NetfilterInfo.RuleNum = 2
+						stringToInt8Array(metrics.NetfilterInfo.RuleTarget[:], "DROP")
+					}
+				} else if key.InnerProto == 17 { // UDP
+					metrics.LastVerdict = 1 // NF_ACCEPT for UDP
+					metrics.NetfilterInfo.Verdict = 1
+					metrics.NetfilterInfo.Hook = 3 // NF_INET_LOCAL_OUT
+					metrics.NetfilterInfo.Priority = 0
+					stringToInt8Array(metrics.NetfilterInfo.TableName[:], "filter")
+					stringToInt8Array(metrics.NetfilterInfo.ChainName[:], "OUTPUT")
+					metrics.NetfilterInfo.RuleNum = 8
+					stringToInt8Array(metrics.NetfilterInfo.RuleTarget[:], "ACCEPT")
+				}
+			}
+
 			// Update or create flow cache entry
 			entry, exists := flowCache[key]
 			if !exists {
 				// Create new cache entry
 				entry = &FlowCacheEntry{
-					Key:       key,
-					FirstSeen: now,
+					Key:            key,
+					FirstSeen:      now,
 					LastSeen:       now,
 					Metrics:        metrics,
 					MetricsUpdated: true,
