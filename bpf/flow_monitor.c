@@ -202,23 +202,46 @@ static __always_inline __u32 calculate_jitter(struct flow_stats_nf *stats, __u64
     __u64 avg_interval = 0;
     __u32 count = stats->interval_index > JITTER_WINDOW_SIZE ? JITTER_WINDOW_SIZE : stats->interval_index;
     
-    // Calculate average interval with bounded loop
-    #pragma unroll
-    for (int i = 0; i < JITTER_WINDOW_SIZE; i++) {
-        if (i >= count) break;
-        avg_interval += stats->pkt_intervals[i];
-    }
+    // Manually unroll the loop for calculating average interval
+    if (count > 0) avg_interval += stats->pkt_intervals[0];
+    if (count > 1) avg_interval += stats->pkt_intervals[1];
+    if (count > 2) avg_interval += stats->pkt_intervals[2];
+    if (count > 3) avg_interval += stats->pkt_intervals[3];
+    if (count > 4) avg_interval += stats->pkt_intervals[4];
+    
     if (count > 0) {
         avg_interval /= count;
     }
     
-    // Calculate variance (simplified jitter calculation) with bounded loop
-    #pragma unroll
-    for (int i = 0; i < JITTER_WINDOW_SIZE; i++) {
-        if (i >= count) break;
-        __u64 diff = stats->pkt_intervals[i] > avg_interval ? 
-                    stats->pkt_intervals[i] - avg_interval : 
-                    avg_interval - stats->pkt_intervals[i];
+    // Manually unroll the loop for calculating variance
+    if (count > 0) {
+        __u64 diff = stats->pkt_intervals[0] > avg_interval ? 
+                    stats->pkt_intervals[0] - avg_interval : 
+                    avg_interval - stats->pkt_intervals[0];
+        total_variance += diff;
+    }
+    if (count > 1) {
+        __u64 diff = stats->pkt_intervals[1] > avg_interval ? 
+                    stats->pkt_intervals[1] - avg_interval : 
+                    avg_interval - stats->pkt_intervals[1];
+        total_variance += diff;
+    }
+    if (count > 2) {
+        __u64 diff = stats->pkt_intervals[2] > avg_interval ? 
+                    stats->pkt_intervals[2] - avg_interval : 
+                    avg_interval - stats->pkt_intervals[2];
+        total_variance += diff;
+    }
+    if (count > 3) {
+        __u64 diff = stats->pkt_intervals[3] > avg_interval ? 
+                    stats->pkt_intervals[3] - avg_interval : 
+                    avg_interval - stats->pkt_intervals[3];
+        total_variance += diff;
+    }
+    if (count > 4) {
+        __u64 diff = stats->pkt_intervals[4] > avg_interval ? 
+                    stats->pkt_intervals[4] - avg_interval : 
+                    avg_interval - stats->pkt_intervals[4];
         total_variance += diff;
     }
     
