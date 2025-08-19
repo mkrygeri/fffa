@@ -39,8 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Output Format Version** - Bumped to version "3" to indicate netfilter capability
   - All netfilter fields included in unified JSON output
-  - Netfilter fields set to `null` when no netfilter events captured
+  - Netfilter fields apply to **all protocols** (TCP, UDP, etc.) since netfilter operates at IP level
+  - Netfilter fields set to `null` only when no netfilter events captured for a flow
   - **Flattened verdict counts**: Individual metrics (`netfilter_accepts`, `netfilter_drops`, `netfilter_rejects`, `netfilter_queues`) instead of nested data
+  - TCP-specific metrics set to `null` for non-TCP protocols (UDP, ICMP, etc.)
   - Comprehensive hook and rule information when available
 
 - **eBPF Program Architecture** - Enhanced with netfilter integration
@@ -57,8 +59,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Memory-efficient cache management with automatic cleanup
 
 ### Enhanced Features
-- **Firewall Analysis**: Deep insight into packet filtering decisions
-- **Security Monitoring**: Comprehensive verdict tracking for security analysis
+- **Firewall Analysis**: Deep insight into packet filtering decisions for all protocols
+- **Security Monitoring**: Comprehensive verdict tracking for security analysis across TCP, UDP, and other IP protocols
+- **Protocol-Specific Metrics**: Proper null handling - only TCP metrics are null for non-TCP, netfilter applies to all
 - **Flow Quality**: Combined network and firewall metrics in single output
 - **Cross-platform Development**: Full AWS development environment for non-Linux systems
 

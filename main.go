@@ -348,7 +348,7 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["ecn_flags"] = nil
 	}
 
-	// Netfilter verdict information
+	// Netfilter verdict information (applies to all protocols since netfilter operates at IP level)
 	if metrics.LastVerdict > 0 {
 		metricsMap["netfilter_verdict"] = getVerdictString(metrics.LastVerdict)
 		metricsMap["netfilter_hook"] = getHookString(metrics.NetfilterInfo.Hook)
@@ -369,6 +369,7 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["netfilter_rejects"] = getVerdictCount(metrics.VerdictCount, 999) // Custom REJECT (if tracked)
 		metricsMap["netfilter_queues"] = getVerdictCount(metrics.VerdictCount, 3)    // NF_QUEUE
 	} else {
+		// No netfilter events captured for this flow (set to null)
 		metricsMap["netfilter_verdict"] = nil
 		metricsMap["netfilter_hook"] = nil
 		metricsMap["netfilter_priority"] = nil

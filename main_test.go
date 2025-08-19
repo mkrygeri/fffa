@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestIPStr(t *testing.T) {
@@ -290,5 +292,97 @@ func TestGetVerdictCount(t *testing.T) {
 	result := getVerdictCount(nil, 1)
 	if result != 0 {
 		t.Errorf("getVerdictCount(nil, 1) = %d; expected 0", result)
+	}
+}
+
+func TestUDPFlowWithNetfilter(t *testing.T) {
+	// Test that UDP flows can include netfilter information
+	// Create a mock flow cache entry for UDP with netfilter data
+	key := FlowKey{
+		OuterSrcIP:     0x0100007f, // 127.0.0.1
+		OuterDstIP:     0x0200007f, // 127.0.0.2
+		InnerSrcIP:     0x0100007f,
+		InnerDstIP:     0x0200007f,
+		InnerSrcPort:   53, // DNS
+		InnerDstPort:   53,
+		InnerProto:     17, // UDP
+		Direction:      1,  // egress
+		IsEncapsulated: 0,
+	}
+
+	stats := FlowStats{
+		Packets:     5,
+		Bytes:       512,
+		LastVerdict: 1, // ACCEPT
+		VerdictCount: map[uint32]uint32{
+			1: 5, // 5 ACCEPTs
+		},
+		NetfilterInfo: NetfilterInfo{
+			Verdict:    1,
+			Hook:       3, // NF_INET_LOCAL_OUT
+			Priority:   -100,
+			TableName:  [16]int8{102, 105, 108, 116, 101, 114, 0}, // "filter"
+			ChainName:  [32]int8{79, 85, 84, 80, 85, 84, 0},       // "OUTPUT"
+			RuleNum:    1,
+			RuleTarget: [32]int8{65, 67, 67, 69, 80, 84, 0},                       // "ACCEPT"
+			MatchInfo:  [64]int8{117, 100, 112, 32, 100, 112, 116, 58, 53, 51, 0}, // "udp dpt:53"
+		},
+	}
+
+	entry := FlowCacheEntry{
+		Key:            key,
+		FirstSeen:      time.Now().Add(-5 * time.Second),
+		LastSeen:       time.Now(),
+		Metrics:        stats,
+		MetricsUpdated: true,
+	}
+
+	metadata := InstanceMeta{
+		AccountID: "123456789012",
+		Region:    "us-east-1",
+	}
+
+	// Format as JSON
+	jsonOutput := formatFlowMetricsJSON(&entry, metadata, time.Now().Format(time.RFC3339))
+
+	// Verify it's valid JSON
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonOutput), &result); err != nil {
+		t.Fatalf("Invalid JSON output: %v", err)
+	}
+
+	// Verify protocol
+	if result["proto"] != "UDP" {
+		t.Errorf("Expected proto 'UDP', got %v", result["proto"])
+	}
+
+	// Verify TCP metrics are null for UDP
+	if result["tcp_flags"] != nil {
+		t.Errorf("Expected tcp_flags to be null for UDP, got %v", result["tcp_flags"])
+	}
+	if result["handshake_latency_us"] != nil {
+		t.Errorf("Expected handshake_latency_us to be null for UDP, got %v", result["handshake_latency_us"])
+	}
+
+	// Verify netfilter metrics are included for UDP
+	if result["netfilter_verdict"] != "ACCEPT" {
+		t.Errorf("Expected netfilter_verdict 'ACCEPT', got %v", result["netfilter_verdict"])
+	}
+	if result["netfilter_hook"] != "NF_INET_LOCAL_OUT" {
+		t.Errorf("Expected netfilter_hook 'NF_INET_LOCAL_OUT', got %v", result["netfilter_hook"])
+	}
+	if result["netfilter_table"] != "filter" {
+		t.Errorf("Expected netfilter_table 'filter', got %v", result["netfilter_table"])
+	}
+	if result["netfilter_chain"] != "OUTPUT" {
+		t.Errorf("Expected netfilter_chain 'OUTPUT', got %v", result["netfilter_chain"])
+	}
+
+	// Verify verdict counts
+	if netfilterAccepts, ok := result["netfilter_accepts"].(float64); !ok || netfilterAccepts != 5 {
+		t.Errorf("Expected netfilter_accepts 5, got %v", result["netfilter_accepts"])
+	}
+	if netfilterDrops, ok := result["netfilter_drops"].(float64); !ok || netfilterDrops != 0 {
+		t.Errorf("Expected netfilter_drops 0, got %v", result["netfilter_drops"])
 	}
 }

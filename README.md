@@ -178,7 +178,7 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
 }
 ```
 
-**UDP Flow Example (TCP and netfilter metrics are null):**
+**UDP Flow Example (TCP-specific metrics are null, but netfilter metrics included):**
 ```json
 {
   "version": "3",
@@ -192,17 +192,17 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
   "retransmissions": null,
   "avg_jitter_us": null,
   "min_rtt_us": null,
-  "netfilter_verdict": null,
-  "netfilter_hook": null,
-  "netfilter_table": null,
-  "netfilter_chain": null,
-  "netfilter_rule_num": null,
-  "netfilter_target": null,
-  "netfilter_match_info": null,
-  "netfilter_accepts": null,
-  "netfilter_drops": null,
-  "netfilter_rejects": null,
-  "netfilter_queues": null,
+  "netfilter_verdict": "ACCEPT",
+  "netfilter_hook": "NF_INET_LOCAL_OUT",
+  "netfilter_table": "filter",
+  "netfilter_chain": "OUTPUT",
+  "netfilter_rule_num": 1,
+  "netfilter_target": "ACCEPT",
+  "netfilter_match_info": "udp dpt:53",
+  "netfilter_accepts": 10,
+  "netfilter_drops": 0,
+  "netfilter_rejects": 0,
+  "netfilter_queues": 0,
   "aws_account": "123456789012"
 }
 ```
@@ -235,7 +235,7 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
 - `rtt_samples`: Number of RTT samples collected
 - `ecn_flags`: ECN congestion notification flags
 
-**Netfilter Verdict Fields (null if no netfilter events captured):**
+**Netfilter Verdict Fields (applies to all protocols - null only if no netfilter events captured):**
 - `netfilter_verdict`: Most recent verdict (ACCEPT, DROP, REJECT, QUEUE, REPEAT, STOP)
 - `netfilter_hook`: Hook point (NF_INET_PRE_ROUTING, NF_INET_LOCAL_IN, NF_INET_FORWARD, NF_INET_LOCAL_OUT, NF_INET_POST_ROUTING)
 - `netfilter_priority`: Hook priority value
