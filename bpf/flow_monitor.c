@@ -517,38 +517,6 @@ int tc_prog(struct __sk_buff *skb) {
     return TC_ACT_OK;
 }
 
-// Update netfilter information for a flow
-static __always_inline void update_netfilter_info(struct flow_key *key, __u32 verdict, 
-                                                  __u32 hook, __s32 priority, 
-                                                  const char *table, const char *chain,
-                                                  __u32 rule_num, const char *target) {
-    struct flow_stats_nf *stats = bpf_map_lookup_elem(&flow_table, key);
-    if (stats) {
-        stats->last_verdict = verdict;
-        stats->netfilter_info.verdict = verdict;
-        stats->netfilter_info.hook = hook;
-        stats->netfilter_info.priority = priority;
-        stats->netfilter_info.rule_num = rule_num;
-        
-        // Copy strings safely
-        if (table) {
-            __builtin_memcpy(stats->netfilter_info.table_name, table, 
-                           sizeof(stats->netfilter_info.table_name) - 1);
-            stats->netfilter_info.table_name[sizeof(stats->netfilter_info.table_name) - 1] = 0;
-        }
-        if (chain) {
-            __builtin_memcpy(stats->netfilter_info.chain_name, chain, 
-                           sizeof(stats->netfilter_info.chain_name) - 1);
-            stats->netfilter_info.chain_name[sizeof(stats->netfilter_info.chain_name) - 1] = 0;
-        }
-        if (target) {
-            __builtin_memcpy(stats->netfilter_info.rule_target, target, 
-                           sizeof(stats->netfilter_info.rule_target) - 1);
-            stats->netfilter_info.rule_target[sizeof(stats->netfilter_info.rule_target) - 1] = 0;
-        }
-    }
-}
-
 // Note: Netfilter eBPF integration requires more complex setup and kernel support
 // For now, focusing on XDP and TC programs which provide comprehensive flow monitoring
 // Netfilter verdict tracking can be added through userspace integration with iptables logs
