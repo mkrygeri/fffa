@@ -11,16 +11,6 @@
 #include <linux/pkt_cls.h>
 #include <bpf/bpf_helpers.h>
 
-// Define netfilter context if not available in headers
-#ifndef BPF_PROG_TYPE_NETFILTER
-struct bpf_nf_ctx {
-    struct sk_buff *skb;
-    const struct nf_hook_state *state;
-    unsigned int hook;
-    int priority;
-};
-#endif
-
 #define GENEVE_PORT 6081
 #define MAX_LATENCY_SAMPLES 10
 #define JITTER_WINDOW_SIZE 5
@@ -559,65 +549,9 @@ static __always_inline void update_netfilter_info(struct flow_key *key, __u32 ve
     }
 }
 
-// Netfilter hook program - will be called when packets hit netfilter rules
-SEC("netfilter")
-int netfilter_prog(struct bpf_nf_ctx *ctx) {
-    // For netfilter hooks, we need to use bpf_skb_load_bytes to access packet data
-    // or work with the netfilter context directly
-    struct sk_buff *skb = ctx->skb;
-    
-    // Get basic packet info from netfilter context
-    // We'll focus on tracking verdicts rather than deep packet inspection
-    __u32 family = ctx->family;
-    __u32 hook = ctx->hook;
-    
-    // Only process IPv4 packets for now
-    if (family != NFPROTO_IPV4)
-        return NF_ACCEPT;
-    
-    // For netfilter hooks, we have limited access to packet data
-    // We'll track verdicts based on hook and context information
-    // In a real implementation, you'd need to use bpf_skb_load_bytes
-    // or other helpers to safely access packet data
-    
-    // Create a simplified flow key based on available context
-    struct flow_key key = {};
-    
-    // We can't easily extract IPs/ports without direct packet access
-    // This is a limitation of netfilter eBPF programs
-    // In practice, you'd coordinate with XDP/TC programs or use other methods
-    
-    // For demonstration, we'll just track hook-based statistics
-    key.direction = (ctx->hook == NF_INET_LOCAL_OUT || ctx->hook == NF_INET_POST_ROUTING) ? 1 : 0;
-    key.is_encapsulated = 0;
-    
-    // Update netfilter information with hook-based data
-    __u32 verdict = NF_ACCEPT; // Default verdict
-    
-    // Map hook to chain name
-    char *chain_name = "UNKNOWN";
-    switch (ctx->hook) {
-        case NF_INET_PRE_ROUTING:
-            chain_name = "PREROUTING";
-            break;
-        case NF_INET_LOCAL_IN:
-            chain_name = "INPUT";
-            break;
-        case NF_INET_FORWARD:
-            chain_name = "FORWARD";
-            break;
-        case NF_INET_LOCAL_OUT:
-            chain_name = "OUTPUT";
-            break;
-        case NF_INET_POST_ROUTING:
-            chain_name = "POSTROUTING";
-            break;
-    }
-    
-    update_netfilter_info(&key, verdict, ctx->hook, ctx->priority, 
-                         "filter", chain_name, 1, "ACCEPT");
-    
-    return NF_ACCEPT;
-}
+// Note: Netfilter eBPF integration requires more complex setup and kernel support
+// For now, focusing on XDP and TC programs which provide comprehensive flow monitoring
+// Netfilter verdict tracking can be added through userspace integration with iptables logs
+// or through other eBPF mechanisms when kernel support is available
 
 char LICENSE[] SEC("license") = "GPL";
