@@ -1,0 +1,60 @@
+# Binaries and build artifacts
+flowmonitor
+fffa.bpf.o
+*.o
+*.so
+*.a
+
+# Go build artifacts
+/bin/
+/pkg/
+vendor/
+
+# Go module cache
+go.sum
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test coverage
+*.out
+coverage.html
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Debug files
+debug
+debug.test
+
+# Profiling data
+*.prof
+
+# Core dumps
+core.*
+
+# Local development
+local/
+tmp/
