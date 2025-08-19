@@ -16,6 +16,12 @@ A high-performance network flow monitoring tool that uses eBPF/XDP to capture an
   - Out-of-order packet detection
   - Duplicate ACK counting
   - ECN (Explicit Congestion Notification) flag tracking
+- **Netfilter verdict tracking** with:
+  - Packet verdicts (ACCEPT, DROP, REJECT, QUEUE, etc.)
+  - Netfilter hook identification (PRE_ROUTING, INPUT, FORWARD, OUTPUT, POST_ROUTING)
+  - iptables table and chain information (filter, nat, mangle, raw)
+  - Rule number and target tracking
+  - Verdict count statistics per flow
 - **Ring buffer** for efficient event streaming
 - **Enhanced flow log output** with JSON structured metrics
 - **AWS VPC Flow Log compatible output**
