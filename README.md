@@ -7,8 +7,17 @@ A high-performance network flow monitoring tool that uses eBPF/XDP to capture an
 - **eBPF/XDP-based packet capture** for minimal overhead
 - **AWS metadata enrichment** with IMDSv2 support
 - **GENEVE tunnel support** for encapsulated traffic
-- **TCP flow tracking** with flag monitoring
+- **Comprehensive TCP metrics** including:
+  - Connection establishment latency (3-way handshake timing)
+  - Packet retransmission detection (fast retransmits vs timeouts)
+  - Network jitter calculation
+  - TCP window size tracking
+  - Round-trip time (RTT) measurements
+  - Out-of-order packet detection
+  - Duplicate ACK counting
+  - ECN (Explicit Congestion Notification) flag tracking
 - **Ring buffer** for efficient event streaming
+- **Enhanced flow log output** with JSON structured metrics
 - **AWS VPC Flow Log compatible output**
 
 ## Architecture
@@ -73,22 +82,108 @@ The program uses several constants that can be modified in `main.go`:
 - `IfaceName`: Network interface to monitor (default: "ens5")
 - `RefreshInterval`: AWS metadata refresh interval (default: 5 minutes)
 
+### Flow Cache Behavior
+
+FFFA uses an intelligent flow cache system that aggregates metrics:
+
+- **Flow Identification**: Flows are identified by 5-tuple (src/dst IP/port + protocol)
+- **Metric Aggregation**: All metrics are continuously updated in the cache
+- **Periodic Output**: Complete flow metrics are output every 5 seconds
+- **Flow Aging**: Inactive flows are expired after 60 seconds with final output
+- **Null Values**: Metrics that don't apply (e.g., TCP metrics for UDP) are set to null
+- **Memory Efficiency**: Flow state is automatically cleaned up to prevent memory leaks
+
 ### Output Format
 
-The tool outputs flow logs in a format compatible with AWS VPC Flow Logs:
+The tool outputs comprehensive flow logs with all available metrics in a single JSON entry per flow. Metrics that don't apply to a particular protocol or haven't been measured are set to `null`.
 
+**Unified JSON Format (all flows):**
+```json
+{
+  "version": "3",
+  "timestamp": "2023-08-19T10:30:00Z",
+  "proto": "TCP",
+  "src_ip": "10.0.1.100",
+  "src_port": 8080,
+  "dst_ip": "10.0.1.200", 
+  "dst_port": 443,
+  "direction": 0,
+  "encapsulated": true,
+  "packets": 150,
+  "bytes": 65536,
+  "first_seen": "2023-08-19T10:29:50Z",
+  "last_seen": "2023-08-19T10:30:00Z",
+  "duration_ms": 10000,
+  "tcp_flags": "SYN|ACK|PSH",
+  "handshake_latency_us": 5000,
+  "retransmissions": 2,
+  "fast_retransmits": 1,
+  "timeout_retransmits": 1,
+  "avg_jitter_us": 1500,
+  "max_jitter_us": 8000,
+  "min_window_size": 1024,
+  "max_window_size": 65535,
+  "out_of_order_pkts": 3,
+  "duplicate_acks": 5,
+  "min_rtt_us": 2000,
+  "max_rtt_us": 15000,
+  "avg_rtt_us": 7500,
+  "rtt_samples": 25,
+  "ecn_flags": 1,
+  "aws_account": "123456789012",
+  "aws_vpc": "vpc-12345678",
+  "aws_subnet": "subnet-87654321"
+}
 ```
-flowlog version=2 proto=TCP src=10.0.1.100:8080 dst=10.0.1.200:443 pkt-src=192.168.1.10 pkt-dst=192.168.1.20 direction=0 encapsulated=true account=123456789012 vpc=vpc-12345678 subnet=subnet-87654321 instance=i-1234567890abcdef0 az=us-east-1a region=us-east-1 time=2023-08-19T10:30:00Z
+
+**UDP Flow Example (TCP metrics are null):**
+```json
+{
+  "version": "3",
+  "proto": "UDP",
+  "src_ip": "10.0.1.100",
+  "src_port": 53,
+  "packets": 10,
+  "bytes": 512,
+  "tcp_flags": null,
+  "handshake_latency_us": null,
+  "retransmissions": null,
+  "avg_jitter_us": null,
+  "min_rtt_us": null,
+  "aws_account": "123456789012"
+}
 ```
 
 ### Fields Explanation
 
+**Basic Flow Fields:**
 - `proto`: Protocol (TCP/UDP)
-- `src/dst`: Outer packet source/destination (for encapsulated traffic)
-- `pkt-src/pkt-dst`: Inner packet source/destination
+- `src_ip/src_port`: Outer packet source (for encapsulated traffic)
+- `dst_ip/dst_port`: Outer packet destination
+- `pkt_src_ip/pkt_dst_ip`: Inner packet source/destination
 - `direction`: 0=ingress, 1=egress
 - `encapsulated`: Whether traffic is GENEVE encapsulated
-- AWS metadata: Account, VPC, subnet, instance, AZ, region
+- `packets/bytes`: Packet and byte counts
+- `first_seen/last_seen`: Flow start and end timestamps
+- `duration_ms`: Flow duration in milliseconds
+
+**TCP Metrics (null for non-TCP protocols):**
+- `tcp_flags`: Human-readable TCP flags (SYN|ACK|FIN|etc.)
+- `handshake_latency_us`: 3-way handshake completion time (null if not measured)
+- `retransmissions`: Total retransmitted packets
+- `fast_retransmits`: Fast retransmit algorithm triggers
+- `timeout_retransmits`: Timeout-based retransmissions
+- `avg_jitter_us/max_jitter_us`: Network jitter measurements (null if not calculated)
+- `min/max_window_size`: TCP window size range (null if not observed)
+- `last_window_size`: Most recent window size
+- `out_of_order_pkts`: Packets received out of sequence
+- `duplicate_acks`: Duplicate ACK count (congestion indicator)
+- `min/max/avg_rtt_us`: Round-trip time measurements (null if not measured)
+- `rtt_samples`: Number of RTT samples collected
+- `ecn_flags`: ECN congestion notification flags
+
+**AWS Metadata:**
+- `aws_account/vpc/subnet/instance/az/region`: AWS infrastructure context
 
 ## AWS Permissions
 

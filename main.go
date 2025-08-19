@@ -45,9 +45,61 @@ type FlowKey struct {
 	IsEncapsulated uint8
 }
 
+// Enhanced flow statistics with network quality metrics
+type FlowStats struct {
+	Packets    uint64
+	Bytes      uint64
+	StartNs    uint64
+	LastSeenNs uint64
+	TCPFlags   uint8
+
+	// Connection establishment metrics
+	SynTimestamp       uint64
+	SynAckTimestamp    uint64
+	AckTimestamp       uint64
+	HandshakeLatencyUs uint32
+
+	// Retransmission tracking
+	Retransmissions    uint32
+	FastRetransmits    uint32
+	TimeoutRetransmits uint32
+	LastSeq            uint32
+	LastSeqTimestamp   uint64
+
+	// Jitter and timing metrics
+	PktIntervals  [5]uint64 // JITTER_WINDOW_SIZE = 5
+	IntervalIndex uint8
+	AvgJitterUs   uint32
+	MaxJitterUs   uint32
+
+	// Window and congestion metrics
+	LastWindowSize uint16
+	MinWindowSize  uint16
+	MaxWindowSize  uint16
+	ECNFlags       uint8
+
+	// Quality metrics
+	OutOfOrderPkts  uint32
+	DuplicateAcks   uint32
+	TotalRTTSamples uint64
+	SumRTTUs        uint64
+	MinRTTUs        uint32
+	MaxRTTUs        uint32
+}
+
 type FlowEvent struct {
 	Key         FlowKey
 	TimestampNs uint64
+	Metrics     FlowStats
+}
+
+// Enhanced flow cache entry that stores all metrics
+type FlowCacheEntry struct {
+	Key            FlowKey
+	LastSeen       time.Time
+	FirstSeen      time.Time
+	Metrics        FlowStats
+	MetricsUpdated bool // Flag to track if metrics were updated since last output
 }
 
 type InstanceMeta struct {
@@ -78,6 +130,161 @@ func protoStr(p uint8) string {
 	}
 }
 
+// Calculate average RTT from samples
+func calculateAvgRTT(stats *FlowStats) uint32 {
+	if stats.TotalRTTSamples == 0 {
+		return 0
+	}
+	return uint32(stats.SumRTTUs / stats.TotalRTTSamples)
+}
+
+// Format TCP flags as human-readable string
+func formatTCPFlags(flags uint8) string {
+	var flagStrs []string
+	if flags&0x01 != 0 {
+		flagStrs = append(flagStrs, "FIN")
+	}
+	if flags&0x02 != 0 {
+		flagStrs = append(flagStrs, "SYN")
+	}
+	if flags&0x04 != 0 {
+		flagStrs = append(flagStrs, "RST")
+	}
+	if flags&0x08 != 0 {
+		flagStrs = append(flagStrs, "PSH")
+	}
+	if flags&0x10 != 0 {
+		flagStrs = append(flagStrs, "ACK")
+	}
+	if flags&0x20 != 0 {
+		flagStrs = append(flagStrs, "URG")
+	}
+	if flags&0x40 != 0 {
+		flagStrs = append(flagStrs, "ECE")
+	}
+	if flags&0x80 != 0 {
+		flagStrs = append(flagStrs, "CWR")
+	}
+
+	if len(flagStrs) == 0 {
+		return "NONE"
+	}
+	return strings.Join(flagStrs, "|")
+}
+
+// Format flow metrics as JSON with null values for non-applicable metrics
+func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts string) string {
+	key := entry.Key
+	metrics := entry.Metrics
+
+	metricsMap := map[string]interface{}{
+		"version":      "3", // Enhanced version
+		"timestamp":    ts,
+		"proto":        protoStr(key.InnerProto),
+		"src_ip":       ipStr(key.OuterSrcIP),
+		"src_port":     key.InnerSrcPort,
+		"dst_ip":       ipStr(key.OuterDstIP),
+		"dst_port":     key.InnerDstPort,
+		"pkt_src_ip":   ipStr(key.InnerSrcIP),
+		"pkt_dst_ip":   ipStr(key.InnerDstIP),
+		"direction":    key.Direction,
+		"encapsulated": key.IsEncapsulated != 0,
+		"packets":      metrics.Packets,
+		"bytes":        metrics.Bytes,
+		"first_seen":   entry.FirstSeen.Format(time.RFC3339),
+		"last_seen":    entry.LastSeen.Format(time.RFC3339),
+		"duration_ms":  entry.LastSeen.Sub(entry.FirstSeen).Milliseconds(),
+	}
+
+	// Add TCP-specific metrics or null values
+	if key.InnerProto == 6 { // TCP
+		metricsMap["tcp_flags"] = formatTCPFlags(metrics.TCPFlags)
+
+		// Connection establishment metrics (null if not measured)
+		if metrics.HandshakeLatencyUs > 0 {
+			metricsMap["handshake_latency_us"] = metrics.HandshakeLatencyUs
+		} else {
+			metricsMap["handshake_latency_us"] = nil
+		}
+
+		// Retransmission metrics
+		metricsMap["retransmissions"] = metrics.Retransmissions
+		metricsMap["fast_retransmits"] = metrics.FastRetransmits
+		metricsMap["timeout_retransmits"] = metrics.TimeoutRetransmits
+
+		// Jitter metrics (null if not calculated)
+		if metrics.AvgJitterUs > 0 {
+			metricsMap["avg_jitter_us"] = metrics.AvgJitterUs
+			metricsMap["max_jitter_us"] = metrics.MaxJitterUs
+		} else {
+			metricsMap["avg_jitter_us"] = nil
+			metricsMap["max_jitter_us"] = nil
+		}
+
+		// Window size metrics (null if not observed)
+		if metrics.MaxWindowSize > 0 {
+			metricsMap["min_window_size"] = metrics.MinWindowSize
+			metricsMap["max_window_size"] = metrics.MaxWindowSize
+			metricsMap["last_window_size"] = metrics.LastWindowSize
+		} else {
+			metricsMap["min_window_size"] = nil
+			metricsMap["max_window_size"] = nil
+			metricsMap["last_window_size"] = nil
+		}
+
+		// Quality metrics
+		metricsMap["out_of_order_pkts"] = metrics.OutOfOrderPkts
+		metricsMap["duplicate_acks"] = metrics.DuplicateAcks
+
+		// RTT metrics (null if not measured)
+		if metrics.TotalRTTSamples > 0 {
+			metricsMap["min_rtt_us"] = metrics.MinRTTUs
+			metricsMap["max_rtt_us"] = metrics.MaxRTTUs
+			metricsMap["avg_rtt_us"] = calculateAvgRTT(&metrics)
+			metricsMap["rtt_samples"] = metrics.TotalRTTSamples
+		} else {
+			metricsMap["min_rtt_us"] = nil
+			metricsMap["max_rtt_us"] = nil
+			metricsMap["avg_rtt_us"] = nil
+			metricsMap["rtt_samples"] = 0
+		}
+
+		// ECN flags
+		metricsMap["ecn_flags"] = metrics.ECNFlags
+
+	} else {
+		// For non-TCP protocols, set TCP-specific metrics to null
+		metricsMap["tcp_flags"] = nil
+		metricsMap["handshake_latency_us"] = nil
+		metricsMap["retransmissions"] = nil
+		metricsMap["fast_retransmits"] = nil
+		metricsMap["timeout_retransmits"] = nil
+		metricsMap["avg_jitter_us"] = nil
+		metricsMap["max_jitter_us"] = nil
+		metricsMap["min_window_size"] = nil
+		metricsMap["max_window_size"] = nil
+		metricsMap["last_window_size"] = nil
+		metricsMap["out_of_order_pkts"] = nil
+		metricsMap["duplicate_acks"] = nil
+		metricsMap["min_rtt_us"] = nil
+		metricsMap["max_rtt_us"] = nil
+		metricsMap["avg_rtt_us"] = nil
+		metricsMap["rtt_samples"] = nil
+		metricsMap["ecn_flags"] = nil
+	}
+
+	// AWS metadata
+	metricsMap["aws_account"] = metadata.AccountID
+	metricsMap["aws_vpc"] = metadata.VpcID
+	metricsMap["aws_subnet"] = metadata.SubnetID
+	metricsMap["aws_instance"] = metadata.InstanceID
+	metricsMap["aws_az"] = metadata.AvailabilityZone
+	metricsMap["aws_region"] = metadata.Region
+
+	jsonBytes, _ := json.Marshal(metricsMap)
+	return string(jsonBytes)
+}
+
 func fetchMetadata() {
 	if time.Since(lastMetaFetch) < RefreshInterval {
 		return
@@ -85,6 +292,10 @@ func fetchMetadata() {
 
 	// Step 1: Get IMDSv2 token
 	tokenReq, err := http.NewRequest("PUT", "http://169.254.169.254/latest/api/token", nil)
+	if err != nil {
+		log.Printf("create token request error: %v", err)
+		return
+	}
 	tokenReq.Header.Set("X-aws-ec2-metadata-token-ttl-seconds", "21600")
 	client := &http.Client{Timeout: 2 * time.Second}
 	tokenResp, err := client.Do(tokenReq)
@@ -93,7 +304,7 @@ func fetchMetadata() {
 		return
 	}
 	defer tokenResp.Body.Close()
-	tokenBytes, err := ioutil.ReadAll(tokenResp.Body)
+	tokenBytes, err := io.ReadAll(tokenResp.Body)
 	if err != nil {
 		log.Printf("read token body: %v", err)
 		return
@@ -203,24 +414,44 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	fmt.Println("Started flow tracker. Press Ctrl+C to exit.")
 
-	flows := make(map[FlowKey]time.Time)
+	// Enhanced flow cache with comprehensive metrics
+	flowCache := make(map[FlowKey]*FlowCacheEntry)
 	agingInterval := 10 * time.Second
 	idleTimeout := 60 * time.Second
+	outputInterval := 5 * time.Second // Output cached flows every 5 seconds
 
+	// Flow aging goroutine
 	go func() {
 		ticker := time.NewTicker(agingInterval)
 		defer ticker.Stop()
 		for range ticker.C {
 			now := time.Now()
-			for k, last := range flows {
-				if now.Sub(last) > idleTimeout {
-					fmt.Printf("flow expired: %+v\n", k)
-					delete(flows, k)
+			for k, entry := range flowCache {
+				if now.Sub(entry.LastSeen) > idleTimeout {
+					// Output final metrics before expiring
+					fmt.Printf("flowlog %s\n", formatFlowMetricsJSON(entry, metadata, now.Format(time.RFC3339)))
+					delete(flowCache, k)
 				}
 			}
 		}
 	}()
 
+	// Periodic output of cached flows
+	go func() {
+		ticker := time.NewTicker(outputInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now()
+			for _, entry := range flowCache {
+				if entry.MetricsUpdated {
+					fmt.Printf("flowlog %s\n", formatFlowMetricsJSON(entry, metadata, now.Format(time.RFC3339)))
+					entry.MetricsUpdated = false // Reset flag after output
+				}
+			}
+		}
+	}()
+
+	// Main event processing goroutine
 	go func() {
 		for {
 			fetchMetadata()
@@ -238,23 +469,27 @@ func main() {
 			}
 
 			key := ev.Key
-			ts := time.Unix(0, int64(ev.TimestampNs)).Format(time.RFC3339)
-			flows[key] = time.Now()
-			fmt.Printf("flowlog version=2 proto=%s src=%s:%d dst=%s:%d pkt-src=%s pkt-dst=%s direction=%d encapsulated=%v account=%s vpc=%s subnet=%s instance=%s az=%s region=%s time=%s\n",
-				protoStr(key.InnerProto),
-				ipStr(key.OuterSrcIP), key.InnerSrcPort,
-				ipStr(key.OuterDstIP), key.InnerDstPort,
-				ipStr(key.InnerSrcIP), ipStr(key.InnerDstIP),
-				key.Direction,
-				key.IsEncapsulated != 0,
-				metadata.AccountID,
-				metadata.VpcID,
-				metadata.SubnetID,
-				metadata.InstanceID,
-				metadata.AvailabilityZone,
-				metadata.Region,
-				ts,
-			)
+			metrics := ev.Metrics
+			now := time.Now()
+
+			// Update or create flow cache entry
+			entry, exists := flowCache[key]
+			if !exists {
+				// Create new cache entry
+				entry = &FlowCacheEntry{
+					Key:            key,
+					FirstSeen:      now,
+					LastSeen:       now,
+					Metrics:        metrics,
+					MetricsUpdated: true,
+				}
+				flowCache[key] = entry
+			} else {
+				// Update existing entry
+				entry.LastSeen = now
+				entry.Metrics = metrics
+				entry.MetricsUpdated = true
+			}
 		}
 	}()
 
