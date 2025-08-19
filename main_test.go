@@ -257,3 +257,38 @@ func TestFlowStatsWithNetfilter(t *testing.T) {
 		t.Errorf("Expected rule number 3, got %d", stats.NetfilterInfo.RuleNum)
 	}
 }
+
+func TestGetVerdictCount(t *testing.T) {
+	// Test getVerdictCount helper function
+	verdictCount := map[uint32]uint32{
+		0: 5,  // 5 DROPs
+		1: 95, // 95 ACCEPTs
+		3: 2,  // 2 QUEUEs
+	}
+
+	tests := []struct {
+		name     string
+		verdict  uint32
+		expected uint32
+	}{
+		{"ACCEPT count", 1, 95},
+		{"DROP count", 0, 5},
+		{"QUEUE count", 3, 2},
+		{"non-existent verdict", 999, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getVerdictCount(verdictCount, tt.verdict)
+			if result != tt.expected {
+				t.Errorf("getVerdictCount(%d) = %d; expected %d", tt.verdict, result, tt.expected)
+			}
+		})
+	}
+
+	// Test with nil map
+	result := getVerdictCount(nil, 1)
+	if result != 0 {
+		t.Errorf("getVerdictCount(nil, 1) = %d; expected 0", result)
+	}
+}

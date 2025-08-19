@@ -168,10 +168,10 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
   "netfilter_rule_num": 3,
   "netfilter_target": "ACCEPT",
   "netfilter_match_info": "tcp dpt:443",
-  "netfilter_verdict_counts": {
-    "ACCEPT": 148,
-    "DROP": 2
-  },
+  "netfilter_accepts": 148,
+  "netfilter_drops": 2,
+  "netfilter_rejects": 0,
+  "netfilter_queues": 0,
   "aws_account": "123456789012",
   "aws_vpc": "vpc-12345678",
   "aws_subnet": "subnet-87654321"
@@ -199,7 +199,10 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
   "netfilter_rule_num": null,
   "netfilter_target": null,
   "netfilter_match_info": null,
-  "netfilter_verdict_counts": null,
+  "netfilter_accepts": null,
+  "netfilter_drops": null,
+  "netfilter_rejects": null,
+  "netfilter_queues": null,
   "aws_account": "123456789012"
 }
 ```
@@ -241,7 +244,10 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
 - `netfilter_rule_num`: Rule number within the chain (null if not available)
 - `netfilter_target`: Target action (ACCEPT, DROP, REJECT, custom target)
 - `netfilter_match_info`: Match criteria information (protocol, ports, etc.)
-- `netfilter_verdict_counts`: Count of each verdict type for this flow
+- `netfilter_accepts`: Count of ACCEPT verdicts for this flow
+- `netfilter_drops`: Count of DROP verdicts for this flow
+- `netfilter_rejects`: Count of REJECT verdicts for this flow (if tracked)
+- `netfilter_queues`: Count of QUEUE verdicts for this flow
 
 **AWS Metadata:**
 - `aws_account/vpc/subnet/instance/az/region`: AWS infrastructure context

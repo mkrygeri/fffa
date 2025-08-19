@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Verdict count statistics aggregated per flow
   - Match criteria information extraction
   - Integration with existing flow cache system
+  - **Flattened output format**: Verdict counts as individual fields instead of nested objects
 
 - **AWS Development Environment** - Complete setup automation for eBPF development
   - `./dev-setup.sh` - Interactive AWS EC2 instance creation and management
@@ -39,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Output Format Version** - Bumped to version "3" to indicate netfilter capability
   - All netfilter fields included in unified JSON output
   - Netfilter fields set to `null` when no netfilter events captured
-  - Verdict count aggregation provides flow-level firewall statistics
+  - **Flattened verdict counts**: Individual metrics (`netfilter_accepts`, `netfilter_drops`, `netfilter_rejects`, `netfilter_queues`) instead of nested data
   - Comprehensive hook and rule information when available
 
 - **eBPF Program Architecture** - Enhanced with netfilter integration

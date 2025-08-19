@@ -239,6 +239,14 @@ func getHookString(hook uint32) string {
 	}
 }
 
+// Get count for specific verdict type from verdict count map
+func getVerdictCount(verdictCount map[uint32]uint32, verdict uint32) uint32 {
+	if verdictCount == nil {
+		return 0
+	}
+	return verdictCount[verdict]
+}
+
 // Format flow metrics as JSON with null values for non-applicable metrics
 func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts string) string {
 	key := entry.Key
@@ -355,16 +363,11 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["netfilter_target"] = cStringToString(metrics.NetfilterInfo.RuleTarget[:])
 		metricsMap["netfilter_match_info"] = cStringToString(metrics.NetfilterInfo.MatchInfo[:])
 
-		// Verdict counts
-		if len(metrics.VerdictCount) > 0 {
-			verdictCounts := make(map[string]uint32)
-			for verdict, count := range metrics.VerdictCount {
-				verdictCounts[getVerdictString(verdict)] = count
-			}
-			metricsMap["netfilter_verdict_counts"] = verdictCounts
-		} else {
-			metricsMap["netfilter_verdict_counts"] = nil
-		}
+		// Individual verdict counts (flattened instead of nested)
+		metricsMap["netfilter_accepts"] = getVerdictCount(metrics.VerdictCount, 1)   // NF_ACCEPT
+		metricsMap["netfilter_drops"] = getVerdictCount(metrics.VerdictCount, 0)     // NF_DROP
+		metricsMap["netfilter_rejects"] = getVerdictCount(metrics.VerdictCount, 999) // Custom REJECT (if tracked)
+		metricsMap["netfilter_queues"] = getVerdictCount(metrics.VerdictCount, 3)    // NF_QUEUE
 	} else {
 		metricsMap["netfilter_verdict"] = nil
 		metricsMap["netfilter_hook"] = nil
@@ -374,10 +377,11 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["netfilter_rule_num"] = nil
 		metricsMap["netfilter_target"] = nil
 		metricsMap["netfilter_match_info"] = nil
-		metricsMap["netfilter_verdict_counts"] = nil
-	}
-
-	// AWS metadata
+		metricsMap["netfilter_accepts"] = nil
+		metricsMap["netfilter_drops"] = nil
+		metricsMap["netfilter_rejects"] = nil
+		metricsMap["netfilter_queues"] = nil
+	} // AWS metadata
 	metricsMap["aws_account"] = metadata.AccountID
 	metricsMap["aws_vpc"] = metadata.VpcID
 	metricsMap["aws_subnet"] = metadata.SubnetID
