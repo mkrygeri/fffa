@@ -45,6 +45,18 @@ type FlowKey struct {
 	IsEncapsulated uint8
 }
 
+// Netfilter verdict and rule information
+type NetfilterInfo struct {
+	Verdict    uint32   // NF_ACCEPT=1, NF_DROP=0, NF_STOLEN=2, NF_QUEUE=3, NF_REPEAT=4
+	Hook       uint32   // NF_INET_PRE_ROUTING=0, NF_INET_LOCAL_IN=1, NF_INET_FORWARD=2, etc.
+	Priority   int32    // Hook priority
+	TableName  [16]int8 // iptables table name (filter, nat, mangle, raw)
+	ChainName  [32]int8 // iptables chain name (INPUT, OUTPUT, FORWARD, etc.)
+	RuleNum    uint32   // Rule number in chain
+	RuleTarget [32]int8 // Target name (ACCEPT, DROP, REJECT, custom target)
+	MatchInfo  [64]int8 // Match information (protocol, port, etc.)
+}
+
 // Enhanced flow statistics with network quality metrics
 type FlowStats struct {
 	Packets    uint64
@@ -85,6 +97,11 @@ type FlowStats struct {
 	SumRTTUs        uint64
 	MinRTTUs        uint32
 	MaxRTTUs        uint32
+
+	// Netfilter verdict tracking
+	NetfilterInfo NetfilterInfo
+	VerdictCount  map[uint32]uint32 // Count of each verdict type
+	LastVerdict   uint32            // Most recent verdict
 }
 
 type FlowEvent struct {
@@ -170,6 +187,56 @@ func formatTCPFlags(flags uint8) string {
 		return "NONE"
 	}
 	return strings.Join(flagStrs, "|")
+}
+
+// Convert C string (int8 array) to Go string
+func cStringToString(cstr []int8) string {
+	buf := make([]byte, 0, len(cstr))
+	for _, c := range cstr {
+		if c == 0 {
+			break
+		}
+		buf = append(buf, byte(c))
+	}
+	return string(buf)
+}
+
+// Convert netfilter verdict code to string
+func getVerdictString(verdict uint32) string {
+	switch verdict {
+	case 0:
+		return "DROP"
+	case 1:
+		return "ACCEPT"
+	case 2:
+		return "STOLEN"
+	case 3:
+		return "QUEUE"
+	case 4:
+		return "REPEAT"
+	case 5:
+		return "STOP"
+	default:
+		return fmt.Sprintf("UNKNOWN_%d", verdict)
+	}
+}
+
+// Convert netfilter hook to string
+func getHookString(hook uint32) string {
+	switch hook {
+	case 0:
+		return "NF_INET_PRE_ROUTING"
+	case 1:
+		return "NF_INET_LOCAL_IN"
+	case 2:
+		return "NF_INET_FORWARD"
+	case 3:
+		return "NF_INET_LOCAL_OUT"
+	case 4:
+		return "NF_INET_POST_ROUTING"
+	default:
+		return fmt.Sprintf("UNKNOWN_HOOK_%d", hook)
+	}
 }
 
 // Format flow metrics as JSON with null values for non-applicable metrics
@@ -271,6 +338,43 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["avg_rtt_us"] = nil
 		metricsMap["rtt_samples"] = nil
 		metricsMap["ecn_flags"] = nil
+	}
+
+	// Netfilter verdict information
+	if metrics.LastVerdict > 0 {
+		metricsMap["netfilter_verdict"] = getVerdictString(metrics.LastVerdict)
+		metricsMap["netfilter_hook"] = getHookString(metrics.NetfilterInfo.Hook)
+		metricsMap["netfilter_priority"] = metrics.NetfilterInfo.Priority
+		metricsMap["netfilter_table"] = cStringToString(metrics.NetfilterInfo.TableName[:])
+		metricsMap["netfilter_chain"] = cStringToString(metrics.NetfilterInfo.ChainName[:])
+		if metrics.NetfilterInfo.RuleNum > 0 {
+			metricsMap["netfilter_rule_num"] = metrics.NetfilterInfo.RuleNum
+		} else {
+			metricsMap["netfilter_rule_num"] = nil
+		}
+		metricsMap["netfilter_target"] = cStringToString(metrics.NetfilterInfo.RuleTarget[:])
+		metricsMap["netfilter_match_info"] = cStringToString(metrics.NetfilterInfo.MatchInfo[:])
+
+		// Verdict counts
+		if len(metrics.VerdictCount) > 0 {
+			verdictCounts := make(map[string]uint32)
+			for verdict, count := range metrics.VerdictCount {
+				verdictCounts[getVerdictString(verdict)] = count
+			}
+			metricsMap["netfilter_verdict_counts"] = verdictCounts
+		} else {
+			metricsMap["netfilter_verdict_counts"] = nil
+		}
+	} else {
+		metricsMap["netfilter_verdict"] = nil
+		metricsMap["netfilter_hook"] = nil
+		metricsMap["netfilter_priority"] = nil
+		metricsMap["netfilter_table"] = nil
+		metricsMap["netfilter_chain"] = nil
+		metricsMap["netfilter_rule_num"] = nil
+		metricsMap["netfilter_target"] = nil
+		metricsMap["netfilter_match_info"] = nil
+		metricsMap["netfilter_verdict_counts"] = nil
 	}
 
 	// AWS metadata
@@ -475,6 +579,11 @@ func main() {
 			// Update or create flow cache entry
 			entry, exists := flowCache[key]
 			if !exists {
+				// Initialize verdict count map
+				if metrics.VerdictCount == nil {
+					metrics.VerdictCount = make(map[uint32]uint32)
+				}
+
 				// Create new cache entry
 				entry = &FlowCacheEntry{
 					Key:            key,
@@ -485,6 +594,11 @@ func main() {
 				}
 				flowCache[key] = entry
 			} else {
+				// Initialize verdict count map if needed
+				if metrics.VerdictCount == nil {
+					metrics.VerdictCount = make(map[uint32]uint32)
+				}
+
 				// Update existing entry
 				entry.LastSeen = now
 				entry.Metrics = metrics
