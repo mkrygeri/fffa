@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -25,10 +26,10 @@ import (
 )
 
 const (
-	BPFObjFile      = "fffa.bpf.o"
+	BPFObjFile      = "bpf/flow_monitor.o"
 	ProgramName     = "xdp_prog"
 	RingMapName     = "flow_ring"
-	IfaceName       = "ens5"
+	DefaultIfaceName = "ens5"
 	MetadataURL     = "http://169.254.169.254/latest/dynamic/instance-identity/document"
 	RefreshInterval = 300 * time.Second
 )
@@ -394,7 +395,7 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 	return string(jsonBytes)
 }
 
-func fetchMetadata() {
+func fetchMetadata(interfaceName string) {
 	if time.Since(lastMetaFetch) < RefreshInterval {
 		return
 	}
@@ -441,7 +442,7 @@ func fetchMetadata() {
 	lastMetaFetch = time.Now()
 
 	// Step 3: Get VPC and Subnet ID from network interface metadata
-	mac, err := os.ReadFile("/sys/class/net/" + IfaceName + "/address")
+	mac, err := os.ReadFile("/sys/class/net/" + interfaceName + "/address")
 	if err != nil {
 		log.Printf("get MAC address: %v", err)
 		return
@@ -475,12 +476,116 @@ func fetchMetadata() {
 	}
 }
 
-func main() {
-	iface, err := net.InterfaceByName(IfaceName)
+// Get all available network interfaces
+func getAllInterfaces() ([]string, error) {
+	interfaces, err := net.Interfaces()
 	if err != nil {
-		log.Fatalf("interface lookup: %v", err)
+		return nil, err
 	}
-	fmt.Printf("Attaching to interface: %s (index %d)\n", IfaceName, iface.Index)
+	
+	var names []string
+	for _, iface := range interfaces {
+		// Skip loopback and down interfaces
+		if iface.Flags&net.FlagLoopback == 0 && iface.Flags&net.FlagUp != 0 {
+			names = append(names, iface.Name)
+		}
+	}
+	return names, nil
+}
+
+// Attach XDP program to a single interface
+func attachToInterface(coll *ebpf.Collection, ifaceName string) (link.Link, error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return nil, fmt.Errorf("interface lookup for %s: %v", ifaceName, err)
+	}
+	
+	prog := coll.Programs[ProgramName]
+	if prog == nil {
+		return nil, fmt.Errorf("program %q not found", ProgramName)
+	}
+	
+	fmt.Printf("Attaching to interface: %s (index %d)\n", ifaceName, iface.Index)
+	
+	lnk, err := link.AttachXDP(link.XDPOptions{
+		Program:   prog,
+		Interface: iface.Index,
+		Flags:     link.XDPGenericMode,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attach XDP to %s: %v", ifaceName, err)
+	}
+	
+	return lnk, nil
+}
+
+// Show usage information
+func showUsage() {
+	fmt.Printf("FFFA - Flow Monitor with eBPF\n\n")
+	fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
+	fmt.Printf("Options:\n")
+	fmt.Printf("  -i, --interface <name>    Interface to monitor (default: %s)\n", DefaultIfaceName)
+	fmt.Printf("  -a, --all-interfaces      Monitor all available interfaces\n")
+	fmt.Printf("  -l, --list-interfaces     List available interfaces and exit\n")
+	fmt.Printf("  -h, --help               Show this help message\n\n")
+	fmt.Printf("Examples:\n")
+	fmt.Printf("  %s -i eth0                Monitor eth0 interface\n", os.Args[0])
+	fmt.Printf("  %s -a                     Monitor all interfaces\n", os.Args[0])
+	fmt.Printf("  %s -l                     List available interfaces\n", os.Args[0])
+}
+
+func main() {
+	// Parse command line arguments
+	var ifaceName = flag.String("i", DefaultIfaceName, "Interface to monitor")
+	var interfaceFlag = flag.String("interface", DefaultIfaceName, "Interface to monitor")
+	var allInterfaces = flag.Bool("a", false, "Monitor all available interfaces")
+	var allInterfacesFlag = flag.Bool("all-interfaces", false, "Monitor all available interfaces")
+	var listInterfaces = flag.Bool("l", false, "List available interfaces and exit")
+	var listInterfacesFlag = flag.Bool("list-interfaces", false, "List available interfaces and exit")
+	var showHelp = flag.Bool("h", false, "Show help message")
+	var showHelpFlag = flag.Bool("help", false, "Show help message")
+	
+	flag.Parse()
+	
+	// Handle help
+	if *showHelp || *showHelpFlag {
+		showUsage()
+		return
+	}
+	
+	// Handle list interfaces
+	if *listInterfaces || *listInterfacesFlag {
+		interfaces, err := getAllInterfaces()
+		if err != nil {
+			log.Fatalf("Failed to get interfaces: %v", err)
+		}
+		fmt.Printf("Available interfaces:\n")
+		for _, name := range interfaces {
+			fmt.Printf("  %s\n", name)
+		}
+		return
+	}
+	
+	// Determine which interface(s) to use
+	var targetInterfaces []string
+	if *allInterfaces || *allInterfacesFlag {
+		interfaces, err := getAllInterfaces()
+		if err != nil {
+			log.Fatalf("Failed to get interfaces: %v", err)
+		}
+		if len(interfaces) == 0 {
+			log.Fatalf("No suitable interfaces found")
+		}
+		targetInterfaces = interfaces
+		fmt.Printf("Monitoring all interfaces: %s\n", strings.Join(interfaces, ", "))
+	} else {
+		// Use -i flag value, or --interface flag value, with -i taking precedence
+		selectedInterface := *ifaceName
+		if *interfaceFlag != DefaultIfaceName {
+			selectedInterface = *interfaceFlag
+		}
+		targetInterfaces = []string{selectedInterface}
+	}
 
 	spec, err := ebpf.LoadCollectionSpec(BPFObjFile)
 	if err != nil {
@@ -493,20 +598,29 @@ func main() {
 	}
 	defer coll.Close()
 
-	prog := coll.Programs[ProgramName]
-	if prog == nil {
-		log.Fatalf("program %q not found in %s", ProgramName, BPFObjFile)
+	// Attach to all target interfaces
+	var links []link.Link
+	for _, targetInterface := range targetInterfaces {
+		lnk, err := attachToInterface(coll, targetInterface)
+		if err != nil {
+			// Clean up any successfully attached links
+			for _, prevLink := range links {
+				prevLink.Close()
+			}
+			log.Fatalf("Failed to attach to interface %s: %v", targetInterface, err)
+		}
+		links = append(links, lnk)
 	}
 
-	lnk, err := link.AttachXDP(link.XDPOptions{
-		Program:   prog,
-		Interface: iface.Index,
-		Flags:     link.XDPGenericMode,
-	})
-	if err != nil {
-		log.Fatalf("attach XDP: %v", err)
-	}
-	defer lnk.Close()
+	fmt.Printf("Successfully attached to %d interface(s)\n", len(links))
+
+	// Clean up links when done
+	defer func() {
+		for i, lnk := range links {
+			fmt.Printf("Detaching from interface %s\n", targetInterfaces[i])
+			lnk.Close()
+		}
+	}()
 
 	ring, ok := coll.Maps[RingMapName]
 	if !ok {
@@ -563,7 +677,7 @@ func main() {
 	// Main event processing goroutine
 	go func() {
 		for {
-			fetchMetadata()
+			fetchMetadata(targetInterfaces[0])
 
 			record, err := sub.Read()
 			if err != nil {
