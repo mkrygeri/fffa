@@ -355,10 +355,22 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["netfilter_match_info"] = cStringToString(metrics.NetfilterInfo.MatchInfo[:])
 
 		// Individual verdict counts (flattened instead of nested)
-		metricsMap["netfilter_accepts"] = uint32(0)   // Simplified for now
-		metricsMap["netfilter_drops"] = uint32(0)     // Simplified for now
-		metricsMap["netfilter_rejects"] = uint32(0)   // Simplified for now
-		metricsMap["netfilter_queues"] = uint32(0)    // Simplified for now
+		// Track the last verdict as a count of 1 for that verdict type
+		var accepts, drops, rejects, queues uint32
+		switch metrics.LastVerdict {
+		case 1:   // NF_ACCEPT
+			accepts = 1
+		case 0:   // NF_DROP  
+			drops = 1
+		case 999: // Custom REJECT value
+			rejects = 1
+		case 3:   // NF_QUEUE
+			queues = 1
+		}
+		metricsMap["netfilter_accepts"] = accepts
+		metricsMap["netfilter_drops"] = drops
+		metricsMap["netfilter_rejects"] = rejects
+		metricsMap["netfilter_queues"] = queues
 	} else {
 		// No netfilter events captured for this flow (set to null)
 		metricsMap["netfilter_verdict"] = nil
