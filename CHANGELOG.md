@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Netfilter Verdict Tracking** - Major enhancement for firewall analysis
+  - Packet verdict capture (ACCEPT, DROP, REJECT, QUEUE, REPEAT, STOP)
+  - Netfilter hook identification (PRE_ROUTING, LOCAL_IN, FORWARD, LOCAL_OUT, POST_ROUTING)
+  - iptables table and chain information (filter, nat, mangle, raw)
+  - Rule number and target tracking when available
+  - Verdict count statistics aggregated per flow
+  - Match criteria information extraction
+  - Integration with existing flow cache system
+
+- **AWS Development Environment** - Complete setup automation for eBPF development
+  - `./dev-setup.sh` - Interactive AWS EC2 instance creation and management
+  - `scripts/setup-aws-dev.sh` - Automated AWS infrastructure provisioning
+  - `scripts/setup-remote-env.sh` - eBPF development toolchain installation
+  - `scripts/sync-to-remote.sh` - Local to remote code synchronization
+  - Enhanced Makefile with AWS-aware build targets and detection
+  - Comprehensive documentation for macOS/Windows developers
+
 - **Comprehensive TCP Network Metrics** - Major enhancement to flow monitoring
   - Connection establishment latency tracking (3-way handshake timing)
   - Packet retransmission detection and classification (fast vs timeout retransmits)
@@ -19,31 +36,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ECN (Explicit Congestion Notification) flag tracking
 
 ### Changed
+- **Output Format Version** - Bumped to version "3" to indicate netfilter capability
+  - All netfilter fields included in unified JSON output
+  - Netfilter fields set to `null` when no netfilter events captured
+  - Verdict count aggregation provides flow-level firewall statistics
+  - Comprehensive hook and rule information when available
+
+- **eBPF Program Architecture** - Enhanced with netfilter integration
+  - Added netfilter hook program (`SEC("netfilter")`) for verdict capture
+  - Enhanced flow statistics structure with netfilter data fields
+  - Improved flow cache with verdict tracking and count aggregation
+  - Kernel version requirements: Linux 5.3+ with CONFIG_BPF_NETFILTER=y
+
 - **Flow Cache Architecture** - Redesigned output system for unified metrics
-  - Single JSON output per flow with all available metrics
+  - Single JSON output per flow with all available metrics (including netfilter)
   - Intelligent null value handling for non-applicable metrics
   - Periodic output system (5-second intervals) instead of immediate logging
   - Flow aging with final metric output before expiration
   - Memory-efficient cache management with automatic cleanup
-- **Output Format** - Unified JSON structure for all protocols
-  - TCP flows include all network quality metrics
-  - UDP/other protocols have TCP-specific fields set to null
-  - Added flow timing information (first_seen, last_seen, duration_ms)
-  - Eliminated separate specialized log lines in favor of comprehensive JSON
 
 ### Enhanced Features
-- **Flow Monitoring**: Enhanced real-time network flow tracking with quality metrics
-- **Performance Analysis**: Deep insight into network performance characteristics
-- **Congestion Detection**: Multiple indicators for network congestion and quality issues
-- **Connection Quality**: Detailed TCP connection health and performance metrics
-- **Memory Management**: Efficient flow cache with automatic aging and cleanup
-
-### Technical Improvements
-- Extended eBPF program with additional maps for connection tracking
-- Enhanced Go userspace with metric calculation and formatting
-- Improved packet parsing for both native and encapsulated traffic
-- Flow cache system with intelligent metric aggregation
-- Null-safe JSON output formatting
+- **Firewall Analysis**: Deep insight into packet filtering decisions
+- **Security Monitoring**: Comprehensive verdict tracking for security analysis
+- **Flow Quality**: Combined network and firewall metrics in single output
+- **Cross-platform Development**: Full AWS development environment for non-Linux systems
 
 ## Previous Features
 

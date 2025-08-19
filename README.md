@@ -28,10 +28,19 @@ A high-performance network flow monitoring tool that uses eBPF/XDP to capture an
 
 ## Architecture
 
-The project consists of two main components:
+The project consists of three main components:
 
-1. **eBPF Program** (`bpf/flow_monitor.c`) - Kernel-space packet processing
-2. **Go Userspace** (`main.go`) - User-space flow collection and AWS enrichment
+1. **eBPF XDP/TC Programs** (`bpf/flow_monitor.c`) - Kernel-space packet processing for flow metrics
+2. **eBPF Netfilter Hook** (`bpf/flow_monitor.c`) - Kernel-space netfilter verdict tracking
+3. **Go Userspace** (`main.go`) - User-space flow collection and AWS enrichment
+
+### eBPF Components
+
+- **XDP Program**: Processes ingress packets at the earliest possible point
+- **TC Program**: Processes egress packets after routing decisions
+- **Netfilter Hook**: Captures iptables/netfilter verdicts and rule information
+- **Flow Cache**: Maintains flow state and metrics in kernel space
+- **Ring Buffer**: Efficient communication channel to userspace
 
 ## Prerequisites
 
@@ -40,6 +49,21 @@ The project consists of two main components:
 - Clang/LLVM for eBPF compilation
 - Kernel headers for your running kernel
 - AWS EC2 instance with appropriate IAM permissions
+
+### Development Environment Options
+
+#### Option 1: Local Linux Development
+For users with a local Linux environment:
+
+#### Option 2: AWS Remote Development (Recommended for macOS/Windows)
+For users on macOS or Windows, use the included AWS development environment:
+
+```bash
+# Quick setup for AWS-based eBPF development
+./dev-setup.sh
+```
+
+This creates an EC2 instance with all required eBPF development tools pre-installed. See the [AWS Development Guide](#aws-development-environment) below for details.
 
 ### Installing Dependencies
 
@@ -136,13 +160,25 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
   "avg_rtt_us": 7500,
   "rtt_samples": 25,
   "ecn_flags": 1,
+  "netfilter_verdict": "ACCEPT",
+  "netfilter_hook": "NF_INET_FORWARD",
+  "netfilter_priority": -200,
+  "netfilter_table": "filter",
+  "netfilter_chain": "FORWARD",
+  "netfilter_rule_num": 3,
+  "netfilter_target": "ACCEPT",
+  "netfilter_match_info": "tcp dpt:443",
+  "netfilter_verdict_counts": {
+    "ACCEPT": 148,
+    "DROP": 2
+  },
   "aws_account": "123456789012",
   "aws_vpc": "vpc-12345678",
   "aws_subnet": "subnet-87654321"
 }
 ```
 
-**UDP Flow Example (TCP metrics are null):**
+**UDP Flow Example (TCP and netfilter metrics are null):**
 ```json
 {
   "version": "3",
@@ -156,6 +192,14 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
   "retransmissions": null,
   "avg_jitter_us": null,
   "min_rtt_us": null,
+  "netfilter_verdict": null,
+  "netfilter_hook": null,
+  "netfilter_table": null,
+  "netfilter_chain": null,
+  "netfilter_rule_num": null,
+  "netfilter_target": null,
+  "netfilter_match_info": null,
+  "netfilter_verdict_counts": null,
   "aws_account": "123456789012"
 }
 ```
@@ -188,12 +232,86 @@ The tool outputs comprehensive flow logs with all available metrics in a single 
 - `rtt_samples`: Number of RTT samples collected
 - `ecn_flags`: ECN congestion notification flags
 
+**Netfilter Verdict Fields (null if no netfilter events captured):**
+- `netfilter_verdict`: Most recent verdict (ACCEPT, DROP, REJECT, QUEUE, REPEAT, STOP)
+- `netfilter_hook`: Hook point (NF_INET_PRE_ROUTING, NF_INET_LOCAL_IN, NF_INET_FORWARD, NF_INET_LOCAL_OUT, NF_INET_POST_ROUTING)
+- `netfilter_priority`: Hook priority value
+- `netfilter_table`: iptables table name (filter, nat, mangle, raw)
+- `netfilter_chain`: iptables chain name (INPUT, OUTPUT, FORWARD, PREROUTING, POSTROUTING)
+- `netfilter_rule_num`: Rule number within the chain (null if not available)
+- `netfilter_target`: Target action (ACCEPT, DROP, REJECT, custom target)
+- `netfilter_match_info`: Match criteria information (protocol, ports, etc.)
+- `netfilter_verdict_counts`: Count of each verdict type for this flow
+
 **AWS Metadata:**
 - `aws_account/vpc/subnet/instance/az/region`: AWS infrastructure context
 
 ## AWS Permissions
 
 The EC2 instance needs access to the Instance Metadata Service (IMDS). No additional IAM permissions are required as the tool uses IMDSv2 for metadata retrieval.
+
+## AWS Development Environment
+
+For developers on macOS or Windows, FFFA includes automated AWS EC2 setup for eBPF development:
+
+### Quick Start
+
+1. **Setup AWS Instance**:
+   ```bash
+   ./dev-setup.sh
+   ```
+   
+   This creates:
+   - EC2 instance (t3.medium) with Amazon Linux 2023
+   - SSH key pair (`~/.ssh/ebpf-dev-key.pem`)
+   - Security group for development access
+   - All eBPF development tools pre-installed
+
+2. **Sync Your Code**:
+   ```bash
+   ./scripts/sync-to-remote.sh ec2-user@<instance-ip>
+   ```
+
+3. **Connect and Build**:
+   ```bash
+   ssh -i ~/.ssh/ebpf-dev-key.pem ec2-user@<instance-ip>
+   cd ~/fffa-dev/fffa
+   make build-bpf
+   sudo ./fffa
+   ```
+
+### Development Workflow
+
+```bash
+# 1. One-time setup (creates AWS infrastructure)
+./dev-setup.sh
+
+# 2. Sync code changes
+./scripts/sync-to-remote.sh ec2-user@<instance-ip>
+
+# 3. Connect to remote instance
+ssh -i ~/.ssh/ebpf-dev-key.pem ec2-user@<instance-ip>
+
+# 4. Build and test (on remote instance)
+cd ~/fffa-dev/fffa
+make build-bpf      # Compile eBPF programs
+sudo ./fffa         # Run with netfilter hooks
+```
+
+### Included Scripts
+
+- `scripts/setup-aws-dev.sh` - Creates AWS infrastructure
+- `scripts/setup-remote-env.sh` - Installs eBPF development tools
+- `scripts/sync-to-remote.sh` - Syncs local project to remote
+- `dev-setup.sh` - Interactive setup helper
+
+### Cost Management
+
+- t3.medium instance: ~$0.05/hour
+- Remember to terminate when done:
+  ```bash
+  aws ec2 terminate-instances --instance-ids <instance-id> --region us-west-2
+  ```
 
 ## Development
 
@@ -286,3 +404,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - GENEVE encapsulation support (port 6081)
 - AWS-specific metadata enrichment
 - Requires root privileges for eBPF program loading
+- Netfilter verdict tracking requires Linux kernel 5.3+ with CONFIG_BPF_NETFILTER=y
+- Netfilter hook integration depends on specific kernel eBPF features

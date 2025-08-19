@@ -108,3 +108,152 @@ func TestInstanceMetaStructure(t *testing.T) {
 		t.Errorf("Expected region us-east-1, got %s", meta.Region)
 	}
 }
+
+func TestNetfilterHelperFunctions(t *testing.T) {
+	// Test verdict string conversion
+	tests := []struct {
+		name     string
+		verdict  uint32
+		expected string
+	}{
+		{"DROP", 0, "DROP"},
+		{"ACCEPT", 1, "ACCEPT"},
+		{"STOLEN", 2, "STOLEN"},
+		{"QUEUE", 3, "QUEUE"},
+		{"REPEAT", 4, "REPEAT"},
+		{"STOP", 5, "STOP"},
+		{"UNKNOWN", 999, "UNKNOWN_999"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getVerdictString(tt.verdict)
+			if result != tt.expected {
+				t.Errorf("getVerdictString(%d) = %s; expected %s", tt.verdict, result, tt.expected)
+			}
+		})
+	}
+
+	// Test hook string conversion
+	hookTests := []struct {
+		name     string
+		hook     uint32
+		expected string
+	}{
+		{"PRE_ROUTING", 0, "NF_INET_PRE_ROUTING"},
+		{"LOCAL_IN", 1, "NF_INET_LOCAL_IN"},
+		{"FORWARD", 2, "NF_INET_FORWARD"},
+		{"LOCAL_OUT", 3, "NF_INET_LOCAL_OUT"},
+		{"POST_ROUTING", 4, "NF_INET_POST_ROUTING"},
+		{"UNKNOWN", 999, "UNKNOWN_HOOK_999"},
+	}
+
+	for _, tt := range hookTests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getHookString(tt.hook)
+			if result != tt.expected {
+				t.Errorf("getHookString(%d) = %s; expected %s", tt.hook, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCStringToString(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []int8
+		expected string
+	}{
+		{
+			name:     "simple string",
+			input:    []int8{102, 105, 108, 116, 101, 114, 0}, // "filter"
+			expected: "filter",
+		},
+		{
+			name:     "empty string",
+			input:    []int8{0},
+			expected: "",
+		},
+		{
+			name:     "string with embedded null",
+			input:    []int8{116, 101, 115, 116, 0, 101, 120, 116, 114, 97},
+			expected: "test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cStringToString(tt.input)
+			if result != tt.expected {
+				t.Errorf("cStringToString(%v) = %s; expected %s", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNetfilterInfoStructure(t *testing.T) {
+	// Test that NetfilterInfo struct can be created and used
+	info := NetfilterInfo{
+		Verdict:    1, // ACCEPT
+		Hook:       2, // FORWARD
+		Priority:   -200,
+		TableName:  [16]int8{102, 105, 108, 116, 101, 114, 0}, // "filter"
+		ChainName:  [32]int8{70, 79, 82, 87, 65, 82, 68, 0},   // "FORWARD"
+		RuleNum:    5,
+		RuleTarget: [32]int8{65, 67, 67, 69, 80, 84, 0},                          // "ACCEPT"
+		MatchInfo:  [64]int8{116, 99, 112, 32, 100, 112, 116, 58, 52, 52, 51, 0}, // "tcp dpt:443"
+	}
+
+	if info.Verdict != 1 {
+		t.Errorf("Expected verdict 1, got %d", info.Verdict)
+	}
+	if info.Hook != 2 {
+		t.Errorf("Expected hook 2, got %d", info.Hook)
+	}
+	if info.RuleNum != 5 {
+		t.Errorf("Expected rule number 5, got %d", info.RuleNum)
+	}
+
+	// Test string conversion
+	tableName := cStringToString(info.TableName[:])
+	if tableName != "filter" {
+		t.Errorf("Expected table name 'filter', got '%s'", tableName)
+	}
+
+	chainName := cStringToString(info.ChainName[:])
+	if chainName != "FORWARD" {
+		t.Errorf("Expected chain name 'FORWARD', got '%s'", chainName)
+	}
+}
+
+func TestFlowStatsWithNetfilter(t *testing.T) {
+	// Test that FlowStats with netfilter information can be created
+	stats := FlowStats{
+		Packets:     100,
+		Bytes:       64000,
+		LastVerdict: 1, // ACCEPT
+		VerdictCount: map[uint32]uint32{
+			0: 2,  // 2 DROPs
+			1: 98, // 98 ACCEPTs
+		},
+		NetfilterInfo: NetfilterInfo{
+			Verdict:    1,
+			Hook:       2,
+			Priority:   -200,
+			TableName:  [16]int8{102, 105, 108, 116, 101, 114, 0}, // "filter"
+			ChainName:  [32]int8{70, 79, 82, 87, 65, 82, 68, 0},   // "FORWARD"
+			RuleNum:    3,
+			RuleTarget: [32]int8{65, 67, 67, 69, 80, 84, 0}, // "ACCEPT"
+		},
+	}
+
+	if stats.LastVerdict != 1 {
+		t.Errorf("Expected last verdict 1, got %d", stats.LastVerdict)
+	}
+	if stats.VerdictCount[1] != 98 {
+		t.Errorf("Expected 98 ACCEPT verdicts, got %d", stats.VerdictCount[1])
+	}
+	if stats.NetfilterInfo.RuleNum != 3 {
+		t.Errorf("Expected rule number 3, got %d", stats.NetfilterInfo.RuleNum)
+	}
+}
