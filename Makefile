@@ -26,10 +26,10 @@ build-linux:
 
 build-bpf:
 	@echo "Building eBPF programs..."
-	@if [ ! -f /usr/include/linux/bpf.h ]; then 
-		echo "Error: Linux kernel headers not found. This must be run on a Linux system."; 
-		echo "Use 'make setup-aws' to create a remote development environment."; 
-		exit 1; 
+	@if [ ! -f /usr/include/linux/bpf.h ]; then \
+		echo "Error: Linux kernel headers not found. This must be run on a Linux system."; \
+		echo "Use 'make setup-aws' to create a remote development environment."; \
+		exit 1; \
 	fi
 	$(CLANG) $(BPF_CFLAGS) -c bpf/flow_monitor.c -o bpf/flow_monitor.o
 	@echo "eBPF object file created: bpf/flow_monitor.o"
