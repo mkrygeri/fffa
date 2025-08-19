@@ -1,4 +1,4 @@
-module github.com/mikek/fffa
+module github.com/mkrygeri/fffa
 
 go 1.24.4
 

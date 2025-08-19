@@ -43,8 +43,8 @@ sudo yum install clang llvm kernel-devel-$(uname -r) make
 
 1. Clone the repository:
 ```bash
-git clone <your-repo-url>
-cd FFFA
+git clone https://github.com/mkrygeri/fffa.git
+cd fffa
 ```
 
 2. Build the project:

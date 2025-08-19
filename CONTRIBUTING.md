@@ -52,7 +52,7 @@ For feature requests:
 
 2. **Clone and build:**
    ```bash
-   git clone https://github.com/your-username/fffa.git
+   git clone https://github.com/mkrygeri/fffa.git
    cd fffa
    make all
    ```
