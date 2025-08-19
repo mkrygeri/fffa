@@ -10,7 +10,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -67,17 +66,17 @@ type FlowStats struct {
 	TCPFlags   uint8
 
 	// Connection establishment metrics
-	SynTimestamp       uint64
-	SynAckTimestamp    uint64
-	AckTimestamp       uint64
+	SynTimestamp      uint64
+	SynAckTimestamp   uint64
+	AckTimestamp      uint64
 	HandshakeLatencyUs uint32
 
 	// Retransmission tracking
-	Retransmissions    uint32
-	FastRetransmits    uint32
-	TimeoutRetransmits uint32
-	LastSeq            uint32
-	LastSeqTimestamp   uint64
+	Retransmissions     uint32
+	FastRetransmits     uint32
+	TimeoutRetransmits  uint32
+	LastSeq             uint32
+	LastSeqTimestamp    uint64
 
 	// Jitter and timing metrics
 	PktIntervals  [5]uint64 // JITTER_WINDOW_SIZE = 5
@@ -99,10 +98,9 @@ type FlowStats struct {
 	MinRTTUs        uint32
 	MaxRTTUs        uint32
 
-	// Netfilter verdict tracking
+	// Netfilter information (matching the eBPF struct)
 	NetfilterInfo NetfilterInfo
-	VerdictCount  map[uint32]uint32 // Count of each verdict type
-	LastVerdict   uint32            // Most recent verdict
+	LastVerdict   uint32
 }
 
 type FlowEvent struct {
@@ -240,14 +238,6 @@ func getHookString(hook uint32) string {
 	}
 }
 
-// Get count for specific verdict type from verdict count map
-func getVerdictCount(verdictCount map[uint32]uint32, verdict uint32) uint32 {
-	if verdictCount == nil {
-		return 0
-	}
-	return verdictCount[verdict]
-}
-
 // Format flow metrics as JSON with null values for non-applicable metrics
 func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts string) string {
 	key := entry.Key
@@ -365,10 +355,10 @@ func formatFlowMetricsJSON(entry *FlowCacheEntry, metadata InstanceMeta, ts stri
 		metricsMap["netfilter_match_info"] = cStringToString(metrics.NetfilterInfo.MatchInfo[:])
 
 		// Individual verdict counts (flattened instead of nested)
-		metricsMap["netfilter_accepts"] = getVerdictCount(metrics.VerdictCount, 1)   // NF_ACCEPT
-		metricsMap["netfilter_drops"] = getVerdictCount(metrics.VerdictCount, 0)     // NF_DROP
-		metricsMap["netfilter_rejects"] = getVerdictCount(metrics.VerdictCount, 999) // Custom REJECT (if tracked)
-		metricsMap["netfilter_queues"] = getVerdictCount(metrics.VerdictCount, 3)    // NF_QUEUE
+		metricsMap["netfilter_accepts"] = uint32(0)   // Simplified for now
+		metricsMap["netfilter_drops"] = uint32(0)     // Simplified for now
+		metricsMap["netfilter_rejects"] = uint32(0)   // Simplified for now
+		metricsMap["netfilter_queues"] = uint32(0)    // Simplified for now
 	} else {
 		// No netfilter events captured for this flow (set to null)
 		metricsMap["netfilter_verdict"] = nil
@@ -458,7 +448,7 @@ func fetchMetadata(interfaceName string) {
 		resp2, err := client.Do(vpcReq)
 		if err == nil {
 			defer resp2.Body.Close()
-			vpcID, _ := ioutil.ReadAll(resp2.Body)
+			vpcID, _ := io.ReadAll(resp2.Body)
 			metadata.VpcID = string(vpcID)
 		}
 	}
@@ -470,7 +460,7 @@ func fetchMetadata(interfaceName string) {
 		resp3, err := client.Do(subnetReq)
 		if err == nil {
 			defer resp3.Body.Close()
-			subnetID, _ := ioutil.ReadAll(resp3.Body)
+			subnetID, _ := io.ReadAll(resp3.Body)
 			metadata.SubnetID = string(subnetID)
 		}
 	}
@@ -698,26 +688,16 @@ func main() {
 			// Update or create flow cache entry
 			entry, exists := flowCache[key]
 			if !exists {
-				// Initialize verdict count map
-				if metrics.VerdictCount == nil {
-					metrics.VerdictCount = make(map[uint32]uint32)
-				}
-
 				// Create new cache entry
 				entry = &FlowCacheEntry{
-					Key:            key,
-					FirstSeen:      now,
+					Key:       key,
+					FirstSeen: now,
 					LastSeen:       now,
 					Metrics:        metrics,
 					MetricsUpdated: true,
 				}
 				flowCache[key] = entry
 			} else {
-				// Initialize verdict count map if needed
-				if metrics.VerdictCount == nil {
-					metrics.VerdictCount = make(map[uint32]uint32)
-				}
-
 				// Update existing entry
 				entry.LastSeen = now
 				entry.Metrics = metrics
